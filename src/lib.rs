@@ -1,15 +1,19 @@
-use std::thread::JoinHandle;
+//use std::thread::JoinHandle;
 use std::thread;
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::sync::Mutex;
 
-
+enum Message {
+    NewJob(Job),
+    Terminate,
+}
 pub struct ThreadPool{
     workers: Vec<Worker>,
     //threads: Vec<thread::JoinHandle<()>>,
-    sender: mpsc::Sender<Job>,
+    sender: mpsc::Sender<Message>,
 }
+
 //struct Job;
 type Job = Box<dyn FnOnce() + Send + 'static>;
 
@@ -40,7 +44,7 @@ impl ThreadPool {
         F: FnOnce() + Send + 'static,
     {
         let job = Box::new(f);
-        self.sender.send(job).unwrap();
+        self.sender.send(Message::NewJob(job)).unwrap();
     }
 
     /*pub fn spawn<F, T>(f: F) -> JoinHandle<T>
@@ -51,6 +55,13 @@ impl ThreadPool {
 
 impl Drop for ThreadPool {
     fn drop(&mut self) {
+        println!("Sending terminate message to all workers");
+
+        for _ in &self.workers {
+            self.sender.send(Message::Terminate).unwrap();
+        }
+        println!("shutting down all workers");
+
         for worker in &mut self.workers {
             println!("shutting down worker {}", worker.id);
 
@@ -67,13 +78,26 @@ struct Worker {
     thread: Option<thread::JoinHandle<()>>,
 }
 impl Worker {
-    fn new(id: usize, receiver: Arc<Mutex<mpsc::Receiver<Job>>>) -> Worker {
+    fn new(id: usize, receiver: Arc<Mutex<mpsc::Receiver<Message>>>) -> Worker {
         let thread = thread::spawn(move || loop {
-            let job = receiver.lock().unwrap().recv().unwrap();
+            let message = receiver.lock().unwrap().recv().unwrap();
 
-            println!("Worker {} got a job; executing.", id);
+            match message {
+                Message::NewJob(job) => {
+                    println!("worker {} got a job; executing.", id);
 
-            job();
+                    job();
+                }
+                Message::Terminate => {
+                    println!("worker {} was told to terminate.", id);
+
+                    break;
+                }
+            }
+
+           /* println!("Worker {} got a job; executing.", id);
+
+            job();*/
         });
 
         Worker {
